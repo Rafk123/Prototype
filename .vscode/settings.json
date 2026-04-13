@@ -1,0 +1,9 @@
+{
+    "cmake.sourceDirectory": "${workspaceFolder}/zephyr",
+    "files.associations": {
+        "**/CMakeLists.txt": "cmake"
+    },
+    "search.exclude": {
+        "CMakeLists.txt": true
+    }
+}
