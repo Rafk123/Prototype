@@ -1,7 +1,0 @@
-// Черновик
-
-// ========== Получение результата от нейросети ==========
-
-// float prediction = predict_from_file("/sdcard/data.wav", "/sdcard/w");
-// ESP_LOGI(TAG, "Prediction: %f", prediction);
-// #include "cnn_wrapper.h"                // Обертка функции нейросети
