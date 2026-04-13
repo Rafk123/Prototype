@@ -5,11 +5,12 @@
 #include "led_manager.h"
 #include "app_config.h"
 
+// Тег для системы логирования
 static const char *TAG = "MAIN";
 
-TaskHandle_t init_handle = NULL;
-TaskHandle_t deinit_handle = NULL;
-TaskHandle_t recording_handle = NULL;
+TaskHandle_t init_handle = NULL;            // Задача инициализации интерфейсов
+TaskHandle_t deinit_handle = NULL;          // Задача деинициализации интерфейсов
+TaskHandle_t recording_handle = NULL;       // Задача записи звука
 
 // Определения переменных из app_config.h
 i2s_chan_handle_t rx_handle = NULL;
@@ -35,15 +36,16 @@ static volatile bool deinit_in_progress = false;
 static volatile uint32_t total_samples = 0;
 
 // Семафоры
-SemaphoreHandle_t resource_mut = NULL;
-SemaphoreHandle_t system_sem = NULL;
-SemaphoreHandle_t record_sem = NULL;
-SemaphoreHandle_t i2s_stop_sem = NULL;  // Добавлен семафор для остановки I2S
+SemaphoreHandle_t resource_mut = NULL;  //  Определяет доступ к глобальным переменным для только одной задачи - Нужен для избежание гонки за ресурсы у задач
+SemaphoreHandle_t system_sem = NULL;    //  Семафор включения - оживает при нажатии на кнопку -> система инициализируется/деинициализируется
+SemaphoreHandle_t record_sem = NULL;    //  Семафор записи - оживает при нажатии на кнопку -> начинается/заканчивается запись
+SemaphoreHandle_t i2s_stop_sem = NULL;  //  Семафор для остановки I2S
 
 // ISR обработчик для кнопки GPIO 19
 static void IRAM_ATTR gpio_system_isr_handler(void* arg) {
     BaseType_t xHigherPriorityTaskWoken = pdFALSE;
     
+    // Отдаем семафор
     xSemaphoreGiveFromISR(system_sem, &xHigherPriorityTaskWoken);
     
     if (xHigherPriorityTaskWoken) {
@@ -55,6 +57,7 @@ static void IRAM_ATTR gpio_system_isr_handler(void* arg) {
 static void IRAM_ATTR gpio_record_isr_handler(void* arg) {
     BaseType_t xHigherPriorityTaskWoken = pdFALSE;
     
+    // Отдаем семафор
     xSemaphoreGiveFromISR(record_sem, &xHigherPriorityTaskWoken);
     
     if (xHigherPriorityTaskWoken) {
@@ -142,12 +145,14 @@ void deinit(void* arg) {
 // Задача записи
 void recording(void* arg) {
     while (true) {
-        
+        // Ужасный процесс проверок
+        // Система должна быть включена, кнопка нажата и ресурсы свободны
         if (!recording_started) {
             if (xSemaphoreTake(record_sem, portMAX_DELAY) == pdTRUE) {
                 if (system_enabled && !deinit_in_progress) {
                     if (xSemaphoreTake(resource_mut, portMAX_DELAY) == pdTRUE) {
                         if (create_wav() == ESP_OK) {
+                            // Готовим все к началу записи
                             recording_started = true;
                             total_samples = 0;
                             
@@ -171,6 +176,7 @@ void recording(void* arg) {
         // Остановка записи
         if (xSemaphoreTake(record_sem, 0) == pdTRUE) {
             if (xSemaphoreTake(resource_mut, portMAX_DELAY) == pdTRUE) {
+                // Закрываем wav файл и обнуляем служебные переменные
                 ESP_LOGI(TAG, "Recording stopped");
                 close_wav(total_samples);
                 recording_started = false;
@@ -184,6 +190,7 @@ void recording(void* arg) {
             continue;
         }
         
+        // Если выключение в процессе, немедленно прерываем процесс
         if (deinit_in_progress || !system_enabled) {
             recording_started = false;
             continue;
@@ -193,16 +200,22 @@ void recording(void* arg) {
         size_t bytes_read = 0;
         esp_err_t ret = microphone_read(&bytes_read);
         
+        // Запись корректна?
         if (ret == ESP_OK && bytes_read > 0) {
+            // Мы всегда получаем на каждый сэмпл 4 байта
             int samples = bytes_read / 4;
             
             for (int j = 0; j < samples; ++j) {
+                // Микрофон 24-битный. Переносим в 16 бит, чтобы все поместилось в uint16_t
                 int32_t sample = (i2s_buffer[j] >> 16) * GAIN_FACTOR;
+                // Перегрузка
                 if (sample > INT16_MAX) sample = INT16_MAX;
                 if (sample < INT16_MIN) sample = INT16_MIN;
+                // Получаем на выходе обработанный сэмпл
                 pcm_buffer[j] = (int16_t)sample;
             }
             
+            // Записываем результат в wav-файл
             write_wav(samples);
             total_samples += samples;
         }
@@ -248,6 +261,7 @@ void app_main(void) {
     
     ESP_LOGI(TAG, "All synchronization primitives created");
 
+    // Без этой приблуды GPIO не будет работать
     gpio_install_isr_service(ESP_INTR_FLAG_IRAM);
     
     // Настройка кнопок (Pull-up, так как замыкают на землю)
@@ -260,6 +274,7 @@ void app_main(void) {
         // Я рекомендую использовать GPIO_INTR_ANYEDGE, если нет дребезга, но лучше NEGEDGE
     };
 
+    // Запуск
     gpio_set_drive_capability(SYSTEM_BUTTON, GPIO_DRIVE_CAP_0);
     gpio_set_drive_capability(RECORD_BUTTON, GPIO_DRIVE_CAP_0);
     

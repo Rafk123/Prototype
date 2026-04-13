@@ -1,7 +1,9 @@
 #include "file_counter.h"
 
+// Тег для системы логирования
 static const char *TAG = "COUNTER";
 
+// Если директории AUDIO с аудиофайлами нет, создается новый
 static esp_err_t create_audio_dir(void) {
     struct stat st;
     
@@ -24,6 +26,9 @@ static esp_err_t create_audio_dir(void) {
     return ESP_OK;
 }
 
+// Инициализация счетчика, напрямую привязана к написанию wav-файлов
+// Происходит поиск файла-счетчика по директории AUDIO, если его нет, он создается
+// Из файла-счетчика, если он есть, извлекается номер последнего или следующего аудиофайла
 esp_err_t counter_init(void) {
     vTaskDelay(pdMS_TO_TICKS(100));
     
@@ -64,6 +69,7 @@ esp_err_t counter_init(void) {
     return ESP_OK;
 }
 
+// Обновляем текстовый файл с текущим счетом аудиофайлов
 esp_err_t counter_increment(void) {
     current_counter++;
     
@@ -80,10 +86,12 @@ esp_err_t counter_increment(void) {
     return ESP_OK;
 }
 
+// Служебные функции
 uint32_t counter_get_current(void) {
     return current_counter;
 }
 
+// По сути выключение счетчика
 esp_err_t counter_reset(void) {
     current_counter = 0;
     return counter_increment();

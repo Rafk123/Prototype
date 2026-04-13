@@ -1,6 +1,8 @@
 #include "i2s_mic.h"
 
+// Лог для системы логирования
 static const char *TAG = "I2S_MIC";
+// Общая переменная для хранения кода ошибки
 static esp_err_t ret;
 
 esp_err_t i2s_init() {
@@ -78,6 +80,7 @@ esp_err_t i2s_init() {
     
 }
 
+// Процесс отключения и удаления программных каналов 
 esp_err_t i2s_disable() {
     
     if (!i2s_enabled) {
@@ -94,6 +97,7 @@ esp_err_t i2s_disable() {
 
 }
 
+// Получаем данные из буфера DMA
 esp_err_t microphone_read(size_t* bytes_read) {
 
     ret = i2s_channel_read(rx_handle, i2s_buffer, sizeof(i2s_buffer), bytes_read, portMAX_DELAY);
@@ -106,6 +110,7 @@ esp_err_t microphone_read(size_t* bytes_read) {
 
 }
 
+// То же самое, но с таймаутом
 esp_err_t microphone_read_with_timeout(size_t *bytes_read, TickType_t timeout) {
     if (!rx_handle || !i2s_enabled) {
         return ESP_ERR_INVALID_STATE;

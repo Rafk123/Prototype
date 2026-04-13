@@ -1,5 +1,6 @@
 #include "wav_writer.h"
 
+// Тег для системы логирования
 static const char *TAG = "WAV";
 
 // Генерация имени файла в формате 000001.wav
@@ -7,6 +8,7 @@ static void generate_filename(char *filename, size_t len, uint32_t number) {
     snprintf(filename, len, "%s/%06" PRIu32 ".wav", AUDIO_DIR_PATH, number);
 }
 
+// Создаем wav файл до записи аудио
 esp_err_t create_wav(void) {
     // Если файл уже открыт, сначала закрываем
     if (file_opened) {
@@ -62,14 +64,19 @@ esp_err_t create_wav(void) {
     return ESP_OK;
 }
 
+// Записываем данные из PCM-буфера в нынешний wav-файл
 esp_err_t write_wav(size_t buffer_size) {
+    // Убеждаемся, что все готово
     if (!file_opened || f == NULL) {
         return ESP_ERR_INVALID_STATE;
     }
     
+    // Теоретическое количество записанных байтов
     size_t bytes_to_write = buffer_size * sizeof(int16_t);
+    // Действительное количество через запись
     size_t written = fwrite(pcm_buffer, 1, bytes_to_write, f);
     
+    // Проверяем, записаны ли все байты
     if (written != bytes_to_write) {
         ESP_LOGE(TAG, "Failed to write PCM data: wrote %d/%d bytes", 
                  written, bytes_to_write);
@@ -79,7 +86,10 @@ esp_err_t write_wav(size_t buffer_size) {
     return ESP_OK;
 }
 
+// Закрываем wav-файл, указав точное (не теоретическое) количество сэмплов
+// Это означает, что мы пишем заголовок для wav-файла и закрываем файл на уровне системы
 esp_err_t close_wav(uint32_t total_samples) {
+    // Убеждаемся, что файл точно открыт
     if (!file_opened || f == NULL) {
         ESP_LOGW(TAG, "No open WAV file to close");
         return ESP_OK;
@@ -87,6 +97,7 @@ esp_err_t close_wav(uint32_t total_samples) {
     
     ESP_LOGI(TAG, "Closing WAV file: %s", current_filename);
     
+    // Если сэмплов ноль, то файл считается аварийным и удаляется
     if (total_samples > 0) {
         // Обновляем WAV заголовок
         uint32_t data_size = total_samples * BYTES_PER_SAMPLE;
@@ -158,16 +169,20 @@ esp_err_t close_wav(uint32_t total_samples) {
     return ESP_OK;
 }
 
+// Завершение записи wav-файла как процесса
 esp_err_t wav_deinit(void) {
+    // Убеждаемся, что wav-файл точно закрыт, иначе закрываем аварийно
     if (file_opened) {
         close_wav(0);
     }
     
+    // Убеждаемся, что файл закрыт на уровне системы
     if (f != NULL) {
         fclose(f);
         f = NULL;
     }
     
+    // Обнуление связанных с этим глобальных переменных
     file_opened = false;
     memset(wav_header, 0, sizeof(wav_header));
     memset(current_filename, 0, sizeof(current_filename));
@@ -175,6 +190,8 @@ esp_err_t wav_deinit(void) {
     return ESP_OK;
 }
 
+// Служебные функции, возможно, бесполезны,
+// так как все переменные - глобальные
 uint32_t get_current_file_number(void) {
     return current_file_number;
 }

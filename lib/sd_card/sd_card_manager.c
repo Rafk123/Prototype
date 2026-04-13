@@ -1,18 +1,22 @@
 #include "sd_card_manager.h"
 
+// Тег для системы логирования
 static const char *TAG = "SD_CARD";
+// Общая переменная для хранения кода ошибки
 static esp_err_t ret;
 
 esp_err_t sd_init() {
 
     // ========== Инициализация SD карты ==========
 
+    // А вдруг смонтировалось?
     if (sd_mounted) {
         return ESP_OK;
     }
 
     ESP_LOGI(TAG, "Initializing SD card...");
 
+    // Это конфигурация для SPI интерфейса
     spi_bus_config_t bus_cfg = {
         .mosi_io_num = SD_MOSI,
         .miso_io_num = SD_MISO,
@@ -22,12 +26,15 @@ esp_err_t sd_init() {
         .max_transfer_sz = 1024,
     };
 
+    // Загружаем конфигурацию
     ret = spi_bus_initialize(SPI2_HOST, &bus_cfg, SPI_DMA_CH_AUTO);
+    // В случае, если не инициализировалось
     if (ret != ESP_OK) {
         ESP_LOGE(TAG, "spi_bus_initialize failed: %s", esp_err_to_name(ret));
         return ret;
     }
 
+    // Конфигурация для самой SD-карты
     sdmmc_host_t host = SDSPI_HOST_DEFAULT();
     host.slot = SPI2_HOST;
     host.max_freq_khz = SD_FREQUENCY;
@@ -46,6 +53,7 @@ esp_err_t sd_init() {
         .allocation_unit_size = 4096,
     };
 
+    // Аналогичный предыдущему процесс
     ret = esp_vfs_fat_sdspi_mount(MOUNT_POINT, &host, &slot_config, &mount_config, &card);
 
     if (ret != ESP_OK) {
@@ -54,11 +62,13 @@ esp_err_t sd_init() {
         return ret;
     }
 
+    // Флаг, лог и метаданные
     sd_mounted = true;
     ESP_LOGI(TAG, "SD card mounted");
     sdmmc_card_print_info(stdout, card);
     
-    // Критически важно: даем время файловой системе стабилизироваться
+    // Критически важно (На самом деле может работать без этого): 
+    // даем время файловой системе стабилизироваться
     vTaskDelay(pdMS_TO_TICKS(200));
 
     return ESP_OK;
@@ -67,16 +77,19 @@ esp_err_t sd_init() {
 
 esp_err_t sd_disable() {
 
+    // Если уже выключено, ничего не делаем
     if (!sd_mounted) {
         return ESP_OK;
     }
 
+    // Все освобождаем
     ESP_LOGI(TAG, "SD unmounting...");
     esp_vfs_fat_sdcard_unmount(MOUNT_POINT, card);
     sdspi_host_deinit();
     spi_bus_free(SPI2_HOST);
     ESP_LOGI(TAG, "SD disabled");
 
+    // Меняем флаг
     sd_mounted = false;
     return ESP_OK;
 

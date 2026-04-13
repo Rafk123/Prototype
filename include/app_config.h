@@ -51,7 +51,7 @@
 // ==================== РАСЧЕТНЫЕ КОНСТАНТЫ ====================
 #define GAIN_FACTOR 8                                   // Коэффициент усиления звука
 #define BYTES_PER_SAMPLE 2                              // 16 бит = 2 байта
-#define BYTE_RATE (SAMPLE_RATE * BYTES_PER_SAMPLE)
+#define BYTE_RATE (SAMPLE_RATE * BYTES_PER_SAMPLE)      // 
 
 // ==================== ГЛОБАЛЬНЫЕ ПЕРЕМЕННЫЕ ====================
 extern i2s_chan_handle_t rx_handle;                     // Хендл для программного I2S канала    
@@ -62,7 +62,7 @@ extern uint8_t wav_header[44];                          // Заголовок WA
 extern int32_t i2s_buffer[DMA_BUF_SIZE];                // Сырые данные из i2s dma-буфера
 extern int16_t pcm_buffer[DMA_BUF_SIZE];                // Обработанные данные из i2s dma-буфера
 extern char current_filename[64];                       // Текущее название аудиофайла
-extern uint32_t current_file_number;                    // ?
+extern uint32_t current_file_number;                    // Нынешний номер записывваемого аудиофайла
 
 // ==================== ФЛАГИ ====================
 extern bool i2s_enabled;                                // Готов ли I2S?
