@@ -1,122 +1,162 @@
+// i2s_mic.c
 #include "i2s_mic.h"
+#include "esp_log.h"
 
-// Лог для системы логирования
 static const char *TAG = "I2S_MIC";
-// Общая переменная для хранения кода ошибки
-static esp_err_t ret;
 
-esp_err_t i2s_init() {
+// ========== Глобальные переменные ==========
+i2s_chan_handle_t rx_handle_master_left = NULL;
+i2s_chan_handle_t rx_handle_master_right = NULL;
+i2s_chan_handle_t rx_handle_slave_left = NULL;
+i2s_chan_handle_t rx_handle_slave_right = NULL;
 
-    // ========== Инициализация I2S ==========
+int32_t i2s_buffer_master_left[DMA_BUF_SIZE];
+int32_t i2s_buffer_master_right[DMA_BUF_SIZE];
+int32_t i2s_buffer_slave_left[DMA_BUF_SIZE];
+int32_t i2s_buffer_slave_right[DMA_BUF_SIZE];
 
+bool i2s_enabled = false;
+
+// ========== Вспомогательная функция ==========
+static esp_err_t i2s_init_channel(
+    i2s_chan_handle_t *handle,
+    i2s_port_t port_id,
+    i2s_role_t role,
+    gpio_num_t bclk_pin,
+    gpio_num_t ws_pin,
+    gpio_num_t din_pin
+) {
+    i2s_chan_config_t chan_cfg = {
+        .id = port_id,
+        .role = role,
+        .dma_desc_num = 4,
+        .dma_frame_num = DMA_BUF_SIZE,
+        .auto_clear = true,
+    };
+    
+    esp_err_t ret = i2s_new_channel(&chan_cfg, NULL, handle);
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "i2s_new_channel failed on port %d: %s", port_id, esp_err_to_name(ret));
+        return ret;
+    }
+    
+    i2s_std_config_t std_cfg = {
+        .clk_cfg = I2S_STD_CLK_DEFAULT_CONFIG(SAMPLE_RATE),
+        .slot_cfg = I2S_STD_PHILIPS_SLOT_DEFAULT_CONFIG(
+            I2S_DATA_BIT_WIDTH_32BIT,
+            I2S_SLOT_MODE_MONO
+        ),
+        .gpio_cfg = {
+            .bclk = bclk_pin,
+            .ws = ws_pin,
+            .din = din_pin,
+            .dout = I2S_GPIO_UNUSED,
+            .mclk = I2S_GPIO_UNUSED,
+        },
+    };
+    
+    ret = i2s_channel_init_std_mode(*handle, &std_cfg);
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "i2s_channel_init_std_mode failed: %s", esp_err_to_name(ret));
+        i2s_del_channel(*handle);
+        return ret;
+    }
+    
+    ret = i2s_channel_enable(*handle);
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "i2s_channel_enable failed: %s", esp_err_to_name(ret));
+        i2s_del_channel(*handle);
+        return ret;
+    }
+    
+    return ESP_OK;
+}
+
+// ========== Инициализация ==========
+esp_err_t i2s_init(void) {
     if (i2s_enabled) {
         return ESP_OK;
     }
-
-    ESP_LOGI(TAG, "Initializing I2S...");
-
-    // Конфигурация канала для DMA
-    i2s_chan_config_t chan_cfg = {
-        .id = I2S_NUM_0,                    // Номер контроллера I2S
-        .role = I2S_ROLE_MASTER,            // Режим работы в рамках интерфейса
-        .dma_desc_num = 4,                  // Количество DMA дескрипторов
-        .dma_frame_num = DMA_BUF_SIZE,      // Размер DMA буфера
-        .auto_clear = true,                 // 0 в буфере, если "тишина"
-    };
-
-    // Конфигурация режима работы (провода и сигнал)
-    i2s_std_config_t std_cfg = {
-        .clk_cfg = I2S_STD_CLK_DEFAULT_CONFIG(SAMPLE_RATE),     // Тактирование по SAMPLE_RATE
-        .slot_cfg = {                                           // Конфигурация сигнала
-            .data_bit_width = I2S_DATA_BIT_WIDTH_32BIT,         // Размер сэмпла
-            .slot_bit_width = I2S_SLOT_BIT_WIDTH_32BIT,         // Ширина посадочного места на шине
-            .slot_mode = I2S_SLOT_MODE_STEREO,                  // Режим работы шины
-            .slot_mask = I2S_STD_SLOT_LEFT,                     // Читаем только левый канал!
-            .ws_width = 32,                                     // Длина импульса выбора канала
-            .ws_pol = false,                                    // Полярность сигнала выбора канала (WS/LRCLK)
-            .bit_shift = true,                                  // Стандарт протокола I2S Phillips
-        },
-        .gpio_cfg = {                                           // Конфигурация пинов
-            .bclk = I2S_BCK,                                    // Ножка тактового сигнала
-            .ws = I2S_WS,                                       // Выбор канала для записи в буфер (левый/правый)
-            .din = I2S_DIN,                                     // Пин для входящих данных (От микрофона)
-            .dout = I2S_GPIO_UNUSED,                            // Пин для исходящих данных (на динамик)
-            .mclk = I2S_GPIO_UNUSED,                            // Основной системный такт
-            .invert_flags = {                                   // Полярность сигналов на пинах
-                .mclk_inv = false,
-                .bclk_inv = false,
-                .ws_inv = false,
-            },
-        },
-    };
-
-    // Создаем новый программный канал I2S
-    // Задаем три параметра: конфигурацию, хендл_отправки, хендл_приема
-    ret = i2s_new_channel(&chan_cfg, NULL, &rx_handle);
-    if (ret != ESP_OK) {
-        ESP_LOGE(TAG, "i2s_new_channel failed: %s", esp_err_to_name(ret));
-        return ret;
-    }
-
-    // Инициализация режима работы для нашего хендла
-    ret = i2s_channel_init_std_mode(rx_handle, &std_cfg);
-    if (ret != ESP_OK) {
-        ESP_LOGE(TAG, "i2s_channel_init_std_mode failed: %s", esp_err_to_name(ret));
-        i2s_del_channel(rx_handle);
-        return ret;
-    }
-
-    // Включение уже настроенного канала
-    ret = i2s_channel_enable(rx_handle);
-    if (ret != ESP_OK) {
-        ESP_LOGE(TAG, "i2s_channel_enable failed: %s", esp_err_to_name(ret));
-        i2s_del_channel(rx_handle);
-        return ret;
-    }
-
-    ESP_LOGI(TAG, "I2S initialized successfully");
+    
+    ESP_LOGI(TAG, "Initializing I2S for 4 ICS-43434 microphones...");
+    
+    // === MASTER PORT (I2S_NUM_0) ===
+    esp_err_t ret = i2s_init_channel(&rx_handle_master_left, I2S_NUM_0, I2S_ROLE_MASTER,
+                                      I2S_BCLK_MASTER_PIN, I2S_WS_MASTER_PIN, I2S_DIN_MASTER_LEFT);
+    if (ret != ESP_OK) return ret;
+    
+    ret = i2s_init_channel(&rx_handle_master_right, I2S_NUM_0, I2S_ROLE_MASTER,
+                           I2S_BCLK_MASTER_PIN, I2S_WS_MASTER_PIN, I2S_DIN_MASTER_RIGHT);
+    if (ret != ESP_OK) return ret;
+    
+    // === SLAVE PORT (I2S_NUM_1) ===
+    ret = i2s_init_channel(&rx_handle_slave_left, I2S_NUM_1, I2S_ROLE_SLAVE,
+                           I2S_BCLK_SLAVE_PIN, I2S_WS_SLAVE_PIN, I2S_DIN_SLAVE_LEFT);
+    if (ret != ESP_OK) return ret;
+    
+    ret = i2s_init_channel(&rx_handle_slave_right, I2S_NUM_1, I2S_ROLE_SLAVE,
+                           I2S_BCLK_SLAVE_PIN, I2S_WS_SLAVE_PIN, I2S_DIN_SLAVE_RIGHT);
+    if (ret != ESP_OK) return ret;
+    
     i2s_enabled = true;
+    ESP_LOGI(TAG, "All 4 I2S channels initialized successfully");
     return ESP_OK;
-    
 }
 
-// Процесс отключения и удаления программных каналов 
-esp_err_t i2s_disable() {
+// ========== Деинициализация ==========
+esp_err_t i2s_disable(void) {
+    if (!i2s_enabled) return ESP_OK;
     
-    if (!i2s_enabled) {
-        return ESP_OK;
-    }
-
-    ESP_LOGI(TAG, "I2S shutdown...");
-    i2s_channel_disable(rx_handle);
-    i2s_del_channel(rx_handle);
-    ESP_LOGI(TAG, "I2S disabled");
+    i2s_channel_disable(rx_handle_master_left);
+    i2s_channel_disable(rx_handle_master_right);
+    i2s_channel_disable(rx_handle_slave_left);
+    i2s_channel_disable(rx_handle_slave_right);
+    
+    i2s_del_channel(rx_handle_master_left);
+    i2s_del_channel(rx_handle_master_right);
+    i2s_del_channel(rx_handle_slave_left);
+    i2s_del_channel(rx_handle_slave_right);
+    
+    rx_handle_master_left = NULL;
+    rx_handle_master_right = NULL;
+    rx_handle_slave_left = NULL;
+    rx_handle_slave_right = NULL;
+    
     i2s_enabled = false;
-
+    ESP_LOGI(TAG, "I2S disabled");
     return ESP_OK;
-
 }
 
-// Получаем данные из буфера DMA
-esp_err_t microphone_read(size_t* bytes_read) {
-
-    ret = i2s_channel_read(rx_handle, i2s_buffer, sizeof(i2s_buffer), bytes_read, portMAX_DELAY);
-    if (ret != ESP_OK) {
-        ESP_LOGE(TAG, "i2s_reading failed: %s", esp_err_to_name(ret));
-        return ret;
-    }
-
-    return ESP_OK;
-
-}
-
-// То же самое, но с таймаутом
-esp_err_t microphone_read_with_timeout(size_t *bytes_read, TickType_t timeout) {
-    if (!rx_handle || !i2s_enabled) {
+// ========== Чтение всех 4 каналов ==========
+esp_err_t microphone_read_all_4ch(size_t *samples_read) {
+    if (!i2s_enabled) {
         return ESP_ERR_INVALID_STATE;
     }
     
-    // Используем таймаут вместо portMAX_DELAY
-    esp_err_t ret = i2s_channel_read(rx_handle, i2s_buffer, DMA_BUF_SIZE * 4, bytes_read, timeout);
-    return ret;
+    size_t bytes_ch1 = 0, bytes_ch2 = 0, bytes_ch3 = 0, bytes_ch4 = 0;
+    
+    esp_err_t ret1 = i2s_channel_read(rx_handle_master_left, i2s_buffer_master_left,
+                                      DMA_BUF_SIZE * 4, &bytes_ch1, portMAX_DELAY);
+    esp_err_t ret2 = i2s_channel_read(rx_handle_master_right, i2s_buffer_master_right,
+                                      DMA_BUF_SIZE * 4, &bytes_ch2, portMAX_DELAY);
+    esp_err_t ret3 = i2s_channel_read(rx_handle_slave_left, i2s_buffer_slave_left,
+                                      DMA_BUF_SIZE * 4, &bytes_ch3, portMAX_DELAY);
+    esp_err_t ret4 = i2s_channel_read(rx_handle_slave_right, i2s_buffer_slave_right,
+                                      DMA_BUF_SIZE * 4, &bytes_ch4, portMAX_DELAY);
+    
+    if (ret1 != ESP_OK || ret2 != ESP_OK || ret3 != ESP_OK || ret4 != ESP_OK) {
+        return ESP_FAIL;
+    }
+    
+    size_t s1 = bytes_ch1 / 4;
+    size_t s2 = bytes_ch2 / 4;
+    size_t s3 = bytes_ch3 / 4;
+    size_t s4 = bytes_ch4 / 4;
+    
+    if (s1 != s2 || s1 != s3 || s1 != s4) {
+        ESP_LOGW(TAG, "Sample mismatch: %d/%d/%d/%d", s1, s2, s3, s4);
+    }
+    
+    *samples_read = s1;
+    return ESP_OK;
 }
