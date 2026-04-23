@@ -5,6 +5,12 @@
 #include "led_manager.h"
 #include "app_config.h"
 
+extern int16_t pcm_buffer_4ch[DMA_BUF_SIZE * 4];
+extern int32_t i2s_buffer_master_left[DMA_BUF_SIZE];
+extern int32_t i2s_buffer_master_right[DMA_BUF_SIZE];
+extern int32_t i2s_buffer_slave_left[DMA_BUF_SIZE];
+extern int32_t i2s_buffer_slave_right[DMA_BUF_SIZE];
+
 // Тег для системы логирования
 static const char *TAG = "MAIN";
 
@@ -142,28 +148,22 @@ void deinit(void* arg) {
     }
 }
 
-// Задача записи
+// ========== НОВАЯ ЗАДАЧА ЗАПИСИ ==========
 void recording(void* arg) {
     while (true) {
-        // Ужасный процесс проверок
-        // Система должна быть включена, кнопка нажата и ресурсы свободны
+        // Старт записи
         if (!recording_started) {
             if (xSemaphoreTake(record_sem, portMAX_DELAY) == pdTRUE) {
                 if (system_enabled && !deinit_in_progress) {
                     if (xSemaphoreTake(resource_mut, portMAX_DELAY) == pdTRUE) {
                         if (create_wav() == ESP_OK) {
-                            // Готовим все к началу записи
                             recording_started = true;
                             total_samples = 0;
-                            
-                            // Зеленый LED горит - идет запись
                             led_green_on();
-                            
                             ESP_LOGI(TAG, "Recording started: #%06" PRIu32 ".wav", 
                                      get_current_file_number());
                         } else {
                             ESP_LOGE(TAG, "Failed to create WAV file");
-                            // Ошибка - выключаем красный (система не готова)
                             led_red_off();
                         }
                         xSemaphoreGive(resource_mut);
@@ -176,51 +176,67 @@ void recording(void* arg) {
         // Остановка записи
         if (xSemaphoreTake(record_sem, 0) == pdTRUE) {
             if (xSemaphoreTake(resource_mut, portMAX_DELAY) == pdTRUE) {
-                // Закрываем wav файл и обнуляем служебные переменные
                 ESP_LOGI(TAG, "Recording stopped");
                 close_wav(total_samples);
                 recording_started = false;
                 total_samples = 0;
-                
-                // Зеленый гаснет, красный продолжает гореть
                 led_green_off();
-                
                 xSemaphoreGive(resource_mut);
             }
             continue;
         }
         
-        // Если выключение в процессе, немедленно прерываем процесс
         if (deinit_in_progress || !system_enabled) {
             recording_started = false;
             continue;
         }
         
-        // Запись данных
-        size_t bytes_read = 0;
-        esp_err_t ret = microphone_read(&bytes_read);
+        // ===== ОСНОВНОЙ ЦИКЛ ЗАПИСИ (4 КАНАЛА) =====
+        size_t samples_read = 0;
+        esp_err_t ret = microphone_read_all_4ch(&samples_read);
         
-        // Запись корректна?
-        if (ret == ESP_OK && bytes_read > 0) {
-            // Мы всегда получаем на каждый сэмпл 4 байта
-            int samples = bytes_read / 4;
-            
-            for (int j = 0; j < samples; ++j) {
-                // Микрофон 24-битный. Переносим в 16 бит, чтобы все поместилось в uint16_t
-                int32_t sample = (i2s_buffer[j] >> 16) * GAIN_FACTOR;
-                // Перегрузка
-                if (sample > INT16_MAX) sample = INT16_MAX;
-                if (sample < INT16_MIN) sample = INT16_MIN;
-                // Получаем на выходе обработанный сэмпл
-                pcm_buffer[j] = (int16_t)sample;
+        if (ret == ESP_OK && samples_read > 0) {
+            // Преобразование и упаковка 4 каналов
+            for (size_t j = 0; j < samples_read; j++) {
+                // Канал 1 (мастер левый)
+                int32_t raw1 = i2s_buffer_master_left[j];
+                int16_t pcm1 = (int16_t)((raw1 >> 16) * GAIN_FACTOR);
+                
+                // Канал 2 (мастер правый)
+                int32_t raw2 = i2s_buffer_master_right[j];
+                int16_t pcm2 = (int16_t)((raw2 >> 16) * GAIN_FACTOR);
+                
+                // Канал 3 (слейв левый)
+                int32_t raw3 = i2s_buffer_slave_left[j];
+                int16_t pcm3 = (int16_t)((raw3 >> 16) * GAIN_FACTOR);
+                
+                // Канал 4 (слейв правый)
+                int32_t raw4 = i2s_buffer_slave_right[j];
+                int16_t pcm4 = (int16_t)((raw4 >> 16) * GAIN_FACTOR);
+                
+                // Клиппинг
+                if (pcm1 > INT16_MAX) pcm1 = INT16_MAX;
+                if (pcm1 < INT16_MIN) pcm1 = INT16_MIN;
+                if (pcm2 > INT16_MAX) pcm2 = INT16_MAX;
+                if (pcm2 < INT16_MIN) pcm2 = INT16_MIN;
+                if (pcm3 > INT16_MAX) pcm3 = INT16_MAX;
+                if (pcm3 < INT16_MIN) pcm3 = INT16_MIN;
+                if (pcm4 > INT16_MAX) pcm4 = INT16_MAX;
+                if (pcm4 < INT16_MIN) pcm4 = INT16_MIN;
+                
+                // Упаковка: [CH1][CH2][CH3][CH4][CH1][CH2][CH3][CH4]...
+                pcm_buffer_4ch[j * 4 + 0] = pcm1;
+                pcm_buffer_4ch[j * 4 + 1] = pcm2;
+                pcm_buffer_4ch[j * 4 + 2] = pcm3;
+                pcm_buffer_4ch[j * 4 + 3] = pcm4;
             }
             
-            // Записываем результат в wav-файл
-            write_wav(samples);
-            total_samples += samples;
+            write_wav_4ch(samples_read);
+            total_samples += samples_read;
         }
     }
 }
+
 
 void app_main(void) {
     
