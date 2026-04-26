@@ -1,5 +1,5 @@
 {
-    "cmake.sourceDirectory": "${workspaceFolder}/zephyr",
+    "cmake.sourceDirectory": "/home/vboxuser/Документы/PlatformIO/Projects/Prototype",
     "files.associations": {
         "**/CMakeLists.txt": "cmake"
     },

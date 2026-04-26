@@ -1,0 +1,15 @@
+dependencies:
+  esp-nn:
+    component_hash: null
+    source:
+      path: /home/vboxuser/Документы/PlatformIO/Projects/Prototype/components/esp-nn
+      type: local
+    version: 1.2.1
+  idf:
+    component_hash: null
+    source:
+      type: idf
+    version: 5.3.1
+manifest_hash: 36b362ee551f07bef322a3f0f794cd7ccdc42f4bc6c7b22a61af807f2ac9db73
+target: esp32s3
+version: 1.0.0

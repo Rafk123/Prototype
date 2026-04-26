@@ -1,9 +1,14 @@
+#ifndef CNN_WRAPPER_H
+#define CNN_WRAPPER_H
+
 #ifdef __cplusplus
 extern "C" {
 #endif
 
-float predict_from_file(char*, char*);
+void wrapper(void);
 
 #ifdef __cplusplus
 }
+#endif
+
 #endif

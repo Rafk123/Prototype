@@ -74,7 +74,7 @@ esp_err_t write_wav(size_t buffer_size) {
     // Теоретическое количество записанных байтов
     size_t bytes_to_write = buffer_size * sizeof(int16_t);
     // Действительное количество через запись
-    size_t written = fwrite(pcm_buffer, 1, bytes_to_write, f);
+    size_t written = fwrite(pcm_buffer_4ch, 1, bytes_to_write, f);
     
     // Проверяем, записаны ли все байты
     if (written != bytes_to_write) {
