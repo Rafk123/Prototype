@@ -67,10 +67,13 @@ esp_err_t create_wav(void) {
 
 // Записываем данные из PCM-буфера в нынешний wav-файл
 void write_wav(const int16_t *data, size_t samples) {
-    if (f == NULL) return;
-    // Пишем 4 * samples int16_t
-    fwrite(data, sizeof(int16_t), samples * 4, f);
-}
+    if (f == NULL) return;   // файл не открыт
+
+    // Записываем 4 * samples значений int16_t
+    size_t written = fwrite(data, sizeof(int16_t), samples * 4, f);
+    if (written != samples * 4) {
+        ESP_LOGE("WAV", "Failed to write all samples");
+    }
     
     // Теоретическое количество записанных байтов
     size_t bytes_to_write = buffer_size * sizeof(int16_t);
