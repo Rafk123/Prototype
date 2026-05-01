@@ -56,9 +56,17 @@
 #define LED_RED_PIN     GPIO_NUM_18 // Красный LED - индикация системы
 #define LED_GREEN_PIN   GPIO_NUM_5  // Зеленый LED - индикация записи
 
+// Приоритеты задач
+#define I2S_READER_PRIORITY   16
+#define LOCALIZATION_PRIORITY 14
+#define RECORDING_PRIORITY    5
+
 // ==================== КОНСТАНТЫ ====================
 #define MOUNT_POINT "/sdcard"                           // Раздел SD-карты
 #define SAMPLE_RATE 16000                               // Частота дискретизации (16 кГц для голоса)
+#define FFT_SIZE              1024
+#define MIC_DISTANCE          0.10f                     // метры
+#define SOUND_SPEED           343.0f
 #define DMA_BUF_SIZE 128                                // Размер DMA буфера (количество фреймов)
 #define SD_FREQUENCY 20000                              // Частота SPI-SD в кГц
 #define LONG_PRESS 300                                  // Длительность долгого нажатия
