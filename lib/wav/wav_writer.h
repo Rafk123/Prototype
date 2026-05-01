@@ -4,7 +4,7 @@
 #include "file_counter.h"
 
 esp_err_t create_wav(void);
-esp_err_t write_wav(size_t);
+void write_wav(const int16_t *data, size_t samples);
 esp_err_t close_wav(uint32_t);
 esp_err_t wav_deinit(void);
 uint32_t get_current_file_number(void);
