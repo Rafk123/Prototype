@@ -1,4 +1,5 @@
 #include "wav_writer.h"
+#include <stdio.h>
 
 // Тег для системы логирования
 static const char *TAG = "WAV";
@@ -65,11 +66,11 @@ esp_err_t create_wav(void) {
 }
 
 // Записываем данные из PCM-буфера в нынешний wav-файл
-esp_err_t write_wav(size_t buffer_size) {
-    // Убеждаемся, что все готово
-    if (!file_opened || f == NULL) {
-        return ESP_ERR_INVALID_STATE;
-    }
+void write_wav(const int16_t *data, size_t samples) {
+    if (f == NULL) return;
+    // Пишем 4 * samples int16_t
+    fwrite(data, sizeof(int16_t), samples * 4, f);
+}
     
     // Теоретическое количество записанных байтов
     size_t bytes_to_write = buffer_size * sizeof(int16_t);
