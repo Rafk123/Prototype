@@ -4,13 +4,10 @@
 #include "wav_writer.h"
 #include "watchdog_timer.h"
 #include "led_manager.h"
+#include "localization.h"
 #include "app_config.h"
 
-extern int16_t pcm_buffer_4ch[DMA_BUF_SIZE * 4];
-extern int32_t i2s_buffer_master_left[DMA_BUF_SIZE];
-extern int32_t i2s_buffer_master_right[DMA_BUF_SIZE];
-extern int32_t i2s_buffer_slave_left[DMA_BUF_SIZE];
-extern int32_t i2s_buffer_slave_right[DMA_BUF_SIZE];
+
 
 // Тег для системы логирования
 static const char *TAG = "MAIN";
@@ -18,6 +15,8 @@ static const char *TAG = "MAIN";
 TaskHandle_t init_handle = NULL;            // Задача инициализации интерфейсов
 TaskHandle_t deinit_handle = NULL;          // Задача деинициализации интерфейсов
 TaskHandle_t recording_handle = NULL;       // Задача записи звука
+TaskHandle_t localization_handle = NULL;    // Задача локализации звука
+QueueHandle_t azimuth_queue;
 
 // Определения переменных из app_config.h
 i2s_chan_handle_t rx_handle = NULL;
@@ -100,6 +99,11 @@ void init(void* arg) {
             // 3. Даем время на стабилизацию файловой системы
             vTaskDelay(pdMS_TO_TICKS(100));
             
+            if (localization_init() == ESP_OK) {
+    xTaskCreatePinnedToCore(localization_task, "localization", 4096, NULL,
+                            LOCALIZATION_PRIORITY, &localization_handle, APP_CPU_NUM);
+}
+            
             system_enabled = true;
             ESP_LOGI(TAG, "System started successfully");
             
@@ -144,10 +148,23 @@ void deinit(void* arg) {
     }
 }
 
+// ----- Задача локализации  -----
+void localization_task(void *arg) {
+    int16_t *ch1, *ch2, *ch3, *ch4;
+    while (1) {
+        if (i2s_get_localization_block(&ch1, &ch2, &ch3, &ch4) == ESP_OK) {
+            float az = localization_calculate_azimuth(ch1, ch2, ch3, ch4);
+            xQueueOverwrite(azimuth_queue, &az);
+            i2s_release_localization_block();
+            ESP_LOGI(TAG, "Azimuth: %.1f°", az);
+        }
+    }
+}
+
 // ========== НОВАЯ ЗАДАЧА ЗАПИСИ ==========
 void recording(void* arg) {
-    while (true) {
-        // Старт записи
+    int16_t rec_buf[DMA_BUF_SIZE * 4];  // временный буфер
+    while (1) {
         if (!recording_started) {
             if (xSemaphoreTake(record_sem, portMAX_DELAY) == pdTRUE) {
                 if (system_enabled && !deinit_in_progress) {
@@ -188,48 +205,12 @@ void recording(void* arg) {
         }
         
         // ===== ОСНОВНОЙ ЦИКЛ ЗАПИСИ (4 КАНАЛА) =====
-        size_t samples_read = 0;
-        esp_err_t ret = microphone_read_all_4ch(&samples_read);
-        
-        if (ret == ESP_OK && samples_read > 0) {
-            // Преобразование и упаковка 4 каналов
-            for (size_t j = 0; j < samples_read; j++) {
-                // Канал 1 (мастер левый)
-                int32_t raw1 = i2s_buffer_master_left[j];
-                int16_t pcm1 = (int16_t)((raw1 >> 16) * GAIN_FACTOR);
-                
-                // Канал 2 (мастер правый)
-                int32_t raw2 = i2s_buffer_master_right[j];
-                int16_t pcm2 = (int16_t)((raw2 >> 16) * GAIN_FACTOR);
-                
-                // Канал 3 (слейв левый)
-                int32_t raw3 = i2s_buffer_slave_left[j];
-                int16_t pcm3 = (int16_t)((raw3 >> 16) * GAIN_FACTOR);
-                
-                // Канал 4 (слейв правый)
-                int32_t raw4 = i2s_buffer_slave_right[j];
-                int16_t pcm4 = (int16_t)((raw4 >> 16) * GAIN_FACTOR);
-                
-                // Клиппинг
-                if (pcm1 > INT16_MAX) pcm1 = INT16_MAX;
-                if (pcm1 < INT16_MIN) pcm1 = INT16_MIN;
-                if (pcm2 > INT16_MAX) pcm2 = INT16_MAX;
-                if (pcm2 < INT16_MIN) pcm2 = INT16_MIN;
-                if (pcm3 > INT16_MAX) pcm3 = INT16_MAX;
-                if (pcm3 < INT16_MIN) pcm3 = INT16_MIN;
-                if (pcm4 > INT16_MAX) pcm4 = INT16_MAX;
-                if (pcm4 < INT16_MIN) pcm4 = INT16_MIN;
-                
-                // Упаковка: [CH1][CH2][CH3][CH4][CH1][CH2][CH3][CH4]...
-                pcm_buffer_4ch[j * 4 + 0] = pcm1;
-                pcm_buffer_4ch[j * 4 + 1] = pcm2;
-                pcm_buffer_4ch[j * 4 + 2] = pcm3;
-                pcm_buffer_4ch[j * 4 + 3] = pcm4;
-            }
-            
-            write_wav(samples_read);
-            total_samples += samples_read;
-        }
+        if (recording_started) {
+    if (i2s_read_continuous(rec_buf, DMA_BUF_SIZE) == ESP_OK) {
+        write_wav(rec_buf, DMA_BUF_SIZE);
+        total_samples += DMA_BUF_SIZE;
+    }
+}
     }
 }
 
